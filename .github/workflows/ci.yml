@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: careerconnect_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-retries 10
+    env:
+      # CI never talks to Reddit or an LLM: mock providers only.
+      APP_MODE: DEMO
+      LLM_PROVIDER: mock
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/careerconnect_test
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/careerconnect_test
+      API_URL: http://localhost:4000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.0.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - name: OpenAPI spec is up to date
+        run: |
+          pnpm --filter @careerconnect/api openapi
+          git diff --exit-code docs/openapi.json
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f apps/api/Dockerfile --target runtime -t careerconnect-api .
+      - run: docker build -f apps/web/Dockerfile --build-arg API_URL=http://api:4000 -t careerconnect-web .

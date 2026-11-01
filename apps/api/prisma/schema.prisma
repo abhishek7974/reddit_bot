@@ -1,0 +1,344 @@
+// CareerConnect AI — data model.
+// Enum values mirror packages/shared/src/enums.ts.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  ADMIN
+  REVIEWER
+  VIEWER
+}
+
+enum AuthorizationStatus {
+  UNKNOWN
+  PENDING
+  APPROVED
+  DENIED
+}
+
+enum EligibilityStatus {
+  PENDING
+  SKIP
+  HOLD_FOR_REVIEW
+  ELIGIBLE_FOR_AUTOMATION
+}
+
+enum PolicyDecision {
+  SKIP
+  HOLD_FOR_REVIEW
+  ELIGIBLE_FOR_AUTOMATION
+}
+
+enum ProcessingStatus {
+  DISCOVERED
+  ANALYZED
+  DRAFTED
+  SKIPPED
+  PUBLISHED
+  PURGED
+  FAILED
+}
+
+enum ReviewStatus {
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  SKIPPED
+}
+
+enum DraftPublishStatus {
+  NOT_PUBLISHED
+  QUEUED
+  PUBLISHED
+  FAILED
+  BLOCKED
+}
+
+enum DisclosureStatus {
+  INCLUDED
+  MISSING
+  NOT_CONFIGURED
+}
+
+enum PublishAttemptStatus {
+  PENDING
+  SUCCEEDED
+  FAILED_TRANSIENT
+  FAILED_PERMANENT
+  BLOCKED
+  SIMULATED
+}
+
+enum ErrorCategory {
+  RATE_LIMITED
+  NETWORK
+  AUTH
+  FORBIDDEN
+  NOT_FOUND
+  POLICY
+  SERVER
+  VALIDATION
+  UNKNOWN
+}
+
+enum DataSource {
+  SYNTHETIC
+  REDDIT
+}
+
+enum CareerTopic {
+  RESUME_FEEDBACK
+  JOB_APPLICATIONS
+  INTERVIEW_PREP
+  CAREER_TRANSITION
+  SOFTWARE_CAREERS
+  ENTRY_LEVEL
+  SALARY_NEGOTIATION
+  RECRUITER_COMMUNICATION
+  PORTFOLIO_FEEDBACK
+  WORKPLACE_DEVELOPMENT
+  OTHER
+}
+
+model User {
+  id             String   @id @default(uuid())
+  email          String   @unique
+  passwordHash   String?
+  externalAuthId String?  @unique
+  role           Role     @default(VIEWER)
+  disabled       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  sessions       Session[]
+  auditEvents    AuditEvent[]
+  reviewedDrafts ReplyDraft[] @relation("DraftReviewer")
+}
+
+model Session {
+  id         String   @id @default(uuid())
+  /// SHA-256 of the opaque cookie token; the raw token is never stored.
+  tokenHash  String   @unique
+  csrfToken  String
+  userId     String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model BrandProfile {
+  id                   String   @id @default(uuid())
+  name                 String
+  description          String   @default("")
+  audience             String   @default("")
+  capabilities         String[] @default([])
+  verifiedFacts        String[] @default([])
+  prohibitedClaims     String[] @default([])
+  approvedUrls         String[] @default([])
+  disclosureText       String   @default("")
+  useCases             String[] @default([])
+  /// Communities where promotion has been explicitly reviewed and permitted. Also requires SubredditPolicy.promotionAllowed.
+  promotionCommunities String[] @default([])
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+model SubredditPolicy {
+  id                  String              @id @default(uuid())
+  /// Lower-cased community name without the r/ prefix.
+  communityName       String              @unique
+  ruleSummary         String              @default("")
+  knownRestrictions   String[]            @default([])
+  promotionAllowed    Boolean             @default(false)
+  automationAllowed   Boolean             @default(false)
+  authorizationStatus AuthorizationStatus @default(UNKNOWN)
+  discoveryEnabled    Boolean             @default(false)
+  lastReviewedAt      DateTime?
+  policyVersion       Int                 @default(1)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+}
+
+/// Singleton (id = "platform"): attestations about Reddit-level authorization, set by an admin with evidence.
+model PlatformAuthorization {
+  id                          String              @id @default("platform")
+  apiAccessAuthorized         AuthorizationStatus @default(UNKNOWN)
+  commercialUseApproved       AuthorizationStatus @default(UNKNOWN)
+  accountRegisteredAndLabeled AuthorizationStatus @default(UNKNOWN)
+  approvalReference           String?
+  botAccountUsername          String?
+  notes                       String?
+  reviewedAt                  DateTime?
+  reviewedById                String?
+  updatedAt                   DateTime            @updatedAt
+}
+
+/// Singleton (id = "system"): runtime switches. Publishing is paused by default.
+model SystemState {
+  id                     String    @id @default("system")
+  globalPause            Boolean   @default(true)
+  pauseReason            String?   @default("Publishing is paused until an administrator verifies authorization.")
+  pausedAt               DateTime? @default(now())
+  pausedById             String?
+  consecutivePublishErrors Int     @default(0)
+  updatedAt              DateTime  @updatedAt
+}
+
+/// Singleton (id = "discovery"): admin-configurable discovery rules.
+model DiscoverySettings {
+  id                   String        @id @default("discovery")
+  keywords             String[]      @default([])
+  exclusions           String[]      @default([])
+  topics               CareerTopic[] @default([])
+  maxPostsPerRun       Int           @default(25)
+  minRelevanceForDraft Float         @default(0.6)
+  updatedAt            DateTime      @updatedAt
+}
+
+model Conversation {
+  id                      String            @id @default(uuid())
+  /// Reddit fullname (t3_xxx) or a synthetic id (syn_xxx).
+  externalPostId          String
+  dataSource              DataSource
+  communityName           String
+  topic                   CareerTopic?
+  relevanceScore          Float?
+  eligibilityStatus       EligibilityStatus @default(PENDING)
+  processingStatus        ProcessingStatus  @default(DISCOVERED)
+  /// { title, excerpt, permalink, topComments } — truncated, minimal, purged at retention expiry.
+  minimalPermittedContext Json?
+  /// Output of the understanding stage (no sensitive inferences).
+  understanding           Json?
+  contentHash             String?
+  postCreatedAt           DateTime?
+  discoveredAt            DateTime          @default(now())
+  processedAt             DateTime?
+  retentionExpiresAt      DateTime
+  purgedAt                DateTime?
+
+  drafts ReplyDraft[]
+
+  @@unique([dataSource, externalPostId])
+  @@index([communityName])
+  @@index([eligibilityStatus])
+  @@index([processingStatus])
+  @@index([retentionExpiresAt])
+  @@index([discoveredAt])
+}
+
+model ReplyDraft {
+  id                    String             @id @default(uuid())
+  conversationId        String
+  /// Current body (may be reviewer-edited). Never includes the disclosure footer.
+  body                  String
+  originalBody          String
+  /// Normalized hash used for exact-duplicate detection.
+  contentHash           String
+  toneAssessment        String?
+  factualityAssessment  String?
+  promotionalAssessment String?
+  qualityScore          Float?
+  quality               Json?
+  detectorFindings      Json?
+  brandRelevance        Float?
+  disclosureStatus      DisclosureStatus   @default(NOT_CONFIGURED)
+  reviewStatus          ReviewStatus       @default(PENDING_REVIEW)
+  publishStatus         DraftPublishStatus @default(NOT_PUBLISHED)
+  policyDecision        PolicyDecision?
+  policyEvaluation      Json?
+  reviewNote            String?
+  reviewedById          String?
+  reviewedAt            DateTime?
+  model                 String?
+  promptVersion         String?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  conversation    Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  reviewedBy      User?            @relation("DraftReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  publishAttempts PublishAttempt[]
+
+  @@index([conversationId])
+  @@index([reviewStatus])
+  @@index([publishStatus])
+  @@index([contentHash])
+  @@index([createdAt])
+}
+
+model PublishAttempt {
+  id                    String               @id @default(uuid())
+  replyDraftId          String
+  /// Unique per logical publish request; the worker refuses to submit the same key twice.
+  idempotencyKey        String               @unique
+  authorizationDecision PolicyDecision
+  policyEvaluation      Json?
+  status                PublishAttemptStatus @default(PENDING)
+  simulated             Boolean              @default(false)
+  externalCommentId     String?
+  errorCategory         ErrorCategory?
+  errorMessage          String?
+  retryCount            Int                  @default(0)
+  requestedById         String?
+  attemptedAt           DateTime             @default(now())
+  completedAt           DateTime?
+
+  replyDraft ReplyDraft @relation(fields: [replyDraftId], references: [id], onDelete: Cascade)
+
+  @@index([replyDraftId])
+  @@index([status])
+  @@index([attemptedAt])
+}
+
+model AuditEvent {
+  id            String   @id @default(uuid())
+  actorId       String?
+  action        String
+  reason        String?
+  entityType    String
+  entityId      String?
+  policyVersion String?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model CampaignMetric {
+  id                String   @id @default(uuid())
+  metricName        String
+  metricValue       Float
+  measuredAt        DateTime @default(now())
+  attributionMethod String
+  metadata          Json?
+
+  @@index([metricName, measuredAt])
+}
+
+/// Per-call LLM token accounting for cost monitoring.
+model LlmUsage {
+  id           String   @id @default(uuid())
+  provider     String
+  model        String
+  stage        String
+  inputTokens  Int
+  outputTokens Int
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+}

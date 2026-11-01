@@ -1,0 +1,24 @@
+{
+  "name": "careerconnect-ai",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Compliance-first AI assistant for career discussions on Reddit (draft-first, fail-closed publishing).",
+  "packageManager": "pnpm@11.0.9",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @careerconnect/api --filter @careerconnect/web dev",
+    "dev:api": "pnpm --filter @careerconnect/api dev",
+    "dev:worker": "pnpm --filter @careerconnect/api dev:worker",
+    "dev:web": "pnpm --filter @careerconnect/web dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "db:migrate": "pnpm --filter @careerconnect/api db:migrate",
+    "db:deploy": "pnpm --filter @careerconnect/api db:deploy",
+    "db:seed": "pnpm --filter @careerconnect/api db:seed",
+    "db:generate": "pnpm --filter @careerconnect/api db:generate"
+  }
+}
